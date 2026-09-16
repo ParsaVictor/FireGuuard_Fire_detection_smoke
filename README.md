@@ -2,7 +2,7 @@
 
 **Fire & smoke detection for indoor CCTV — one notebook from raw datasets to a deployable model.**
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ParsaVictor/fireguard/blob/main/FireGuard_Pipeline.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ParsaVictor/FireGuuard_Fire_detection_smoke/blob/main/FireGuard_Pipeline.ipynb)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![YOLO](https://img.shields.io/badge/detector-YOLO26-8A2BE2)
@@ -95,7 +95,7 @@ the model is evaluated on false-alarm rate rather than mAP alone.
 
 ## Quickstart
 
-**[▶ Open `FireGuard_Pipeline.ipynb` in Colab](https://colab.research.google.com/github/ParsaVictor/fireguard/blob/main/FireGuard_Pipeline.ipynb)**
+**[▶ Open `FireGuard_Pipeline.ipynb` in Colab](https://colab.research.google.com/github/ParsaVictor/FireGuuard_Fire_detection_smoke/blob/main/FireGuard_Pipeline.ipynb)**
 → `Runtime → Change runtime type → T4 GPU` → run the cells in order.
 
 One notebook, 14 sections, dataset download through TensorRT export:
