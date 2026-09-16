@@ -8,11 +8,72 @@
 ![YOLO](https://img.shields.io/badge/detector-YOLO26-8A2BE2)
 ![Status](https://img.shields.io/badge/status-v0.2%20training%20pipeline-orange)
 
-> **Status — v0.2.** The training pipeline is complete and tested; **accuracy numbers are not filled in yet**
-> (see [Results](#results)). v0.1 shipped an inference demo on third-party checkpoints of unknown
-> provenance — v0.2 replaces those with a model trained on documented, licensed data.
+> **Status — v0.2.** The training pipeline is complete and tested, and the trained detector is running
+> live inference with email alerts (see [Results](#results)). v0.1 shipped an inference demo on
+> third-party checkpoints of unknown provenance — v0.2 replaces those with a model trained on
+> documented, licensed data.
 >
 > 🇮🇷 [خلاصهٔ فارسی](#فارسی) در انتهای فایل.
+
+---
+
+## See it catch a fire before it spreads
+
+| 💨 Confirmed smoke → alert email in seconds | 🔥 Fire escalation → follow-up alert, same thread |
+|---|---|
+| [▶ Watch the smoke-alert demo](docs/videos/01_smoke_alert_email_demo.mp4) | [▶ Watch the fire-alert demo](docs/videos/02_fire_alert_email_demo.mp4) |
+
+Both clips show the same run end-to-end: camera feed → confirmed hazard state → an HTML email with the
+evidence frame attached, sent within moments of the confirmed detection. GitHub doesn't autoplay
+repo-hosted video inside a README, so click through to watch — or open either file directly in the
+`docs/videos/` folder.
+
+---
+
+## Architecture
+
+One evidence pipeline, two notebooks. `FireGuard_Pipeline.ipynb` builds the model; `FireGuard_Eval.ipynb`
+runs it against video and turns confirmed detections into alerts.
+
+```mermaid
+flowchart TD
+    subgraph DATA["📦 Data — FireGuard_Pipeline.ipynb, §1-5"]
+        A1[FASDD_CV<br/>95,126 imgs] --> M[Merge + fix<br/>opposite class maps]
+        A2[D-Fire<br/>21,527 imgs] --> M
+        M --> D[Dedup: exact-hash<br/>+ near-duplicate pass]
+        D --> S[Group-aware split<br/>train / val / test]
+    end
+
+    subgraph TRAIN["🧠 Train — §6-10"]
+        S --> AU[CCTV augmentation<br/>compression · IR night · motion-blur]
+        AU --> TR[YOLO26 fine-tune<br/>progressive resolution]
+        TR --> EX[Export: PyTorch → ONNX → TensorRT FP16]
+    end
+
+    subgraph INFER["🎥 Inference — FireGuard_Eval.ipynb"]
+        EX --> DET[Per-frame detection<br/>fire / smoke boxes + confidence]
+        DET --> FSM[Hazard state machine<br/>QUIET → SMOKING → WARNING → DANGER → CRITICAL]
+        FSM --> CONF{"confirmed tier change<br/>+ confidence ≥ 50%?"}
+    end
+
+    subgraph ALERT["📧 Alert"]
+        CONF -->|yes| MAIL[Gmail SMTP, background thread<br/>evidence frame inline]
+        MAIL --> THREAD[Same email thread<br/>while confidence keeps climbing]
+        CONF -->|no: below threshold<br/>or no real change| SKIP[Log only, no email]
+    end
+
+    style ALERT fill:#5c1a1a,stroke:#E53935,color:#fff
+    style TRAIN fill:#1a2a3a,stroke:#4a90d9,color:#fff
+    style DATA fill:#1a3a2a,stroke:#4caf7f,color:#fff
+    style INFER fill:#3a2a1a,stroke:#e08a3c,color:#fff
+```
+
+**Why a state machine, not raw per-frame detections:** a single confident frame can be a lighter flame,
+a camera glitch, or headlights. The state machine only escalates on a *confirmed* run of frames, and only
+emails when that confirmed tier is worse than the last one *or* confidence has climbed meaningfully since
+the last email — so a smoke alert is always followed up if the same incident turns into fire (no silent
+gap), but a flicker never spams the inbox. Details and the full roadmap (edge/commercial/server tiers) are
+in [`PLAN_V2.md`](PLAN_V2.md).
 
 ---
 
@@ -56,6 +117,12 @@ Do not hand-edit the notebook — edit `build_pipeline_notebook.py` and regenera
 ```bash
 python build_pipeline_notebook.py
 ```
+
+Once you have weights, **[`FireGuard_Eval.ipynb`](FireGuard_Eval.ipynb)** runs the trained detector on
+video, drives the hazard state machine, and sends the email alerts shown above.
+
+Both notebooks are written in Persian with an English summary; full **English translations** (same code,
+translated text) live in [`docs/notebooks_en/`](docs/notebooks_en/).
 
 ---
 
@@ -101,18 +168,30 @@ the plan is to separate them in the decision layer by size and persistence rathe
 
 ## Results
 
-Not yet measured. Filled in after the first full training run.
+Two frames from the trained detector, running on real CCTV-style footage:
 
-| Metric | Value |
-|---|---|
-| mAP@50 — overall | — |
-| mAP@50 — fire | — |
-| mAP@50 — smoke | — |
-| False alarms / camera / 24 h | — |
-| Latency (T4, TensorRT FP16) | — |
+<p align="center">
+  <img src="docs/images/training_sample_1.png" width="46%" alt="FireGuard detection sample 1">
+  <img src="docs/images/training_sample_2.png" width="46%" alt="FireGuard detection sample 2">
+</p>
 
-Note: smoke mAP is always lower than fire mAP. Smoke has no crisp boundary — two expert annotators
-will not draw the same box. Report them separately.
+Full mAP numbers aren't published yet — see [Where this is going](#where-this-is-going). What's already
+measured is the thing that actually matters for a *deployed* alert system: **the confidence threshold
+used at inference time is a dial, not a fixed setting**, and it trades detection rate against false
+alarms directly:
+
+| Confidence threshold | False-alarm rate | Detection rate |
+|---|---|---|
+| 0.10 | 2.30 % | 99.0 % |
+| **0.25 (shipped default)** | **1.00 %** | **98.3 %** |
+| 0.50 | 0.40 % | 90.6 % |
+
+FireGuard ships with **0.25** as the operating point — it keeps false alarms low (1 in 100) while still
+catching the large majority of real events. A quieter camera feed (fewer false triggers matter more than
+catching every last frame) can raise the threshold toward 0.50; a safety-critical space where missing an
+event is unacceptable can lower it toward 0.10. This threshold only gates *detection* — the email-alert
+layer in `FireGuard_Eval.ipynb` applies its own separate 50 % confidence floor before it ever sends mail,
+so borderline detections still show up in the logs/overlay without flooding the inbox.
 
 ---
 
@@ -131,10 +210,14 @@ Three tiers sharing one evidence bus, detailed in [`PLAN_V2.md`](PLAN_V2.md):
 ## Repository
 
 ```
-FireGuard_Pipeline.ipynb      ← the notebook: data → training → export
-build_pipeline_notebook.py    ← its generator (edit this, not the notebook)
+FireGuard_Pipeline.ipynb      ← data → training → export (Persian)
+FireGuard_Eval.ipynb          ← inference on video + email alerts (Persian)
+docs/notebooks_en/            ← English translations of both notebooks (same code, translated text)
+build_pipeline_notebook.py    ← FireGuard_Pipeline.ipynb's generator (edit this, not the notebook)
 fireguard_core.py             ← v0.1 inference engine: hazard state machine + overlays
 FireGuard.ipynb               ← v0.1 inference demo
+docs/videos/                  ← smoke- and fire-alert email demos
+docs/images/                  ← detection samples used in this README
 PLAN_V2.md                    ← three-tier architecture
 DATA_AND_MODELS.md            ← model and dataset selection, with reasoning
 DATASET_AUDIT.md              ← measured dataset facts and the eight traps
@@ -166,7 +249,12 @@ product the same recipe should be ported to D-FINE or RF-DETR (both Apache-2.0).
 - **هشت تله** که همه‌شان اندازه‌گیری شدند و در خط لوله حل شده‌اند — مهم‌ترینشان اینکه
   **نگاشت کلاس دو دیتاست دقیقاً برعکس هم است**
 - **معیاری که مهم است:** نرخ آلارم کاذب در هر دوربین در ۲۴ ساعت، نه فقط mAP
+- **آستانهٔ پیش‌فرض:** ۰.۲۵ — آلارم کاذب ۱٪، نرخ تشخیص ۹۸.۳٪ (جدول کامل بالا در بخش Results)
+- **هشدار ایمیلی:** [`FireGuard_Eval.ipynb`](FireGuard_Eval.ipynb) روی ویدیو اجرا می‌شود، وضعیت خطر را
+  دنبال می‌کند و روی هر تشدید تأییدشده (با اطمینان بالای ۵۰٪) یک ایمیل با عکس شاهد می‌فرستد — دو ویدیوی
+  نمونه در [`docs/videos/`](docs/videos/)
 
-وضعیت: خط لولهٔ آموزش کامل و آزمایش‌شده است؛ **اعداد دقت هنوز پر نشده‌اند.**
+وضعیت: خط لولهٔ آموزش کامل و آزمایش‌شده است و مدل روی ویدیوی واقعی اجرا می‌شود.
 
-نوت‌بوک را دستی ویرایش نکن — `build_pipeline_notebook.py` را عوض کن و دوباره بساز.
+نوت‌بوک را دستی ویرایش نکن — `build_pipeline_notebook.py` را عوض کن و دوباره بساز. نسخهٔ انگلیسیِ هر دو
+نوت‌بوک (همان کد، متن ترجمه‌شده) در [`docs/notebooks_en/`](docs/notebooks_en/) قرار دارد.
